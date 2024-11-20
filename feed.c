@@ -1,31 +1,25 @@
 #include "feed.h"
 #include "ultis.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <fcntl.h>
-#include <unitstd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <signal.h>
-#include <errno.h>
 
-void abort(int i){
+char feedFifo[50];
+int fd_manager_fifo, fd_feed_fifo;
+
+void Abort(int i){
     close(fd_manager_fifo);
-    close(fd_feed_fifo)
+    close(fd_feed_fifo);
     unlink(feedFifo);
     exit(i);
 }
 
-void handle_signal(int signum, singinfo_t *info, void* secret){
+void handle_signal(int signum, siginfo_t *info, void* secret){
     if(signum == SIGINT){
-        abort(0);
+        Abort(0);
     }
 }
 
-char *toBytes(Request req, char *message, size_t *totalSize){
+char *toBytes(Request req, char *message, int *totalSize){
     *totalSize = sizeof(Request) + strlen(message) + 1;
-    char result = malloc(sizeof(char) * (*totalSize));
+    char *result = malloc(sizeof(char) * (*totalSize));
 
     if(!result){
         printf("Failed to allocate memory\n");
@@ -37,9 +31,6 @@ char *toBytes(Request req, char *message, size_t *totalSize){
 
     return result;
 }
-
-char feedFifo[50];
-int fd_manager_fifo, fd_feed_fifo;
 
 int main(int argc, char *argv[]){
     setbuf(stdout, NULL);
@@ -54,10 +45,10 @@ int main(int argc, char *argv[]){
     sa.sa_flags = SA_SIGINFO;
     sigaction(SIGINT, &sa, NULL);
 
-    fd_manager_fifo = open(SERVER_FIFO, O_WRONLY);
+    fd_manager_fifo = open(MANAGER_FIFO, O_WRONLY);
 
     if(fd_manager_fifo == -1){
-        pritnf("Error opening manager\n");
+        printf("Error opening manager\n");
         exit(1);
     }
 
@@ -67,7 +58,7 @@ int main(int argc, char *argv[]){
         if(errno == EEXIST)
             printf("Fifo already created\n");
         printf("Error creating fifo\n");
-        close(fd_manager_fifo)
+        close(fd_manager_fifo);
         exit(1);
     }
     
@@ -78,27 +69,27 @@ int main(int argc, char *argv[]){
         Abort(1);
     }
 
-    char* msg;
+    char *msg;
     int totalSize;
     
-    Request req = {.pid = getpid(), .type = LOGIN, .size = strlen(arv[1]) + 1};
+    Request req = {.pid = getpid(), .type = LOGIN, .size = strlen(argv[1]) + 1};
     msg = toBytes(req, argv[1], &totalSize);
     write(fd_manager_fifo, msg, totalSize);
     free(msg);
 
     //TODO: wait for request to be validated with read() when login is fully implemented on the server side
-
+    char command[500];
     while(1){
         req.type = COMMAND;
         printf("Write Here: ");
 
-        fgets(msg, sizeof(msg), stdin);
-        if(str[strlen(msg) - 1] == '\n') str[strlen(msg) - 1] = '\0';
+        fgets(command, 500, stdin);
+        if(command[strlen(command) - 1] == '\n') command[strlen(command) - 1] = '\0';
 
-        req.size = strlen(msg) + 1;
-        msg = toBytes(req, msg, &totalSize);
+        req.size = strlen(command) + 1;
+        msg = toBytes(req, command, &totalSize);
         write(fd_manager_fifo, msg, totalSize);
         free(msg);
     }
-    abort(0);
+    Abort(0);
 }
