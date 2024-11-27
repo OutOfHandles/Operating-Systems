@@ -1,33 +1,71 @@
 #include "manager.h"
-#include "ultis.h"
 
-int fd_manager_fifo, nUsers;
-User users[MAX_USERS];
+int fd_manager_fifo, running = 1;
 
-void handleLogin(int feed_fifo, char *username, char *message){
-    if(nUsers >= MAX_USERS){
-        strcpy(message, "MANAGER FULL\n");
+
+int openUserFifo(pid_t pid){
+    char fifoName[20];
+    sprintf(fifoName, FEED_FIFO, pid);
+    int fifo = open(fifoName, O_WRONLY);
+
+    return fifo;
+}
+
+void removeUser(Users *users, pid_t pid){
+    pthread_mutex_lock(users->mutex);
+
+    int newSize = 0;
+    for(int i = 0; i < *users->size; i++){
+        if(users->users[i].pid != pid)
+            users->users[newSize++] = users->users[i];
+    }
+    *users->size = newSize;
+
+    pthread_mutex_unlock(users->mutex);
+}
+
+ManagerStatus addUser(Users *users, char *name, User *newUser){
+    if(*users->size >= MAX_USERS){
+        return MANAGER_FULL;
+    }
+    for(int i = 0; i < *users->size; i++){
+        if(strcmp(name, users->users[i].name) == 0) return USERNAME_IN_USE;
+    }
+    ManagerStatus ret = SUCCESS;
+
+    snprintf(newUser->name, MAX_NAME_LEN, "%s", name); //acts like strcpy_s
+
+    if(strlen(name) >= MAX_NAME_LEN)
+        ret = TRUNCATED;
+
+    users->users[(*users->size)++] = *newUser;
+    return ret;
+}
+
+void handleLogin(Users *users, char *name, pid_t pid){
+    int fifo = openUserFifo(pid);
+    
+    if(fifo == -1){
+        printf("Failed to open feed fifo\n");
+        kill(pid, SIGUSR1); //USR1 -> internal server error
         return;
     }
-    strcpy(message, "SUCCESSFULLY LOGGED IN\n");
+
+    pthread_mutex_lock(users->mutex);
+
+    User newUser = {.pid = pid, .nTopics = 0};
+    ManagerStatus status = addUser(users , name, &newUser);
     
-    User newUser;
-
-    newUser.fd_client_fifo = feed_fifo;
-
-    /*
-        strncpy(newUser.name, username, MAX_NAME_LEN - 1);
-        newUser.name[MAX_NAME_LEN - 1] = '\0';
-    */
-
-    snprintf(newUser.name, MAX_NAME_LEN, "%s", username); //acts like strcpy_s
-
-    if(strlen(username) >= MAX_NAME_LEN){
-        strcpy(message, "NAME WAS TRUNCATED TO: ");
-        strcat(message, username);
+    pthread_mutex_unlock(users->mutex);
+    
+    int written = write(fifo, &status, sizeof(ManagerStatus));
+    
+    if(written <= 0){
+        kill(pid, SIGUSR1);
+        printf("Failed to send response to user\n");
     }
 
-    users[nUsers++] = newUser;
+    close(fifo);
 }
 
 void Abort(int code){
@@ -37,21 +75,126 @@ void Abort(int code){
     exit(code);
 }
 
-void handle_signal(int signum, siginfo_t *info, void* secret){
-    if(signum == SIGINT){
-        close(fd_manager_fifo);
+int loadFile(PersistentMessage pm[], int *size){
+    FILE *f = fopen("messages.txt", "r"); //change to read from env
+
+    if(!f) return -1;
+
+    while(fscanf(f, "%s %s %d %[^\n]s", pm[(*size)++].name, pm[(*size)++].topic, &pm[(*size)++].lifetime, pm[(*size)++].content) != EOF);
+
+    return 0;
+}
+
+void saveToFile(PersistentMessage pm[], int size){
+    FILE *f = fopen("messages.txt", "w"); //change to read from env
+
+    if(!f){
+        printf("Failed to open file\n");
+        return;
+    }
+    
+    for(int i = 0; i < size; i++){
+        fprintf(f, "%s %s %d %s", pm[size++].name, pm[size++].topic, &pm[size++].lifetime, pm[size++].content);
     }
 }
 
-int manager_fifo;
+void handle_signal(int signum, siginfo_t *info, void* secret){}
+
+void *persistentThread(void *data){
+    PersistentList *pList = (PersistentList*)data;
+
+    pthread_mutex_lock(pList->mutex);
+    pthread_mutex_unlock(pList->mutex);
+
+    while(running){
+        pthread_mutex_lock(pList->mutex);
+
+        int flag = 0;
+        for(int i = 0; i < *pList->size; i++){
+            pList->messages[i].lifetime--;
+
+            if(pList->messages[i].lifetime <= 0){
+                flag = 1;
+            }
+        }
+
+        if(flag != 0){
+            int newSize = 0; 
+            for(int i = 0; i < *pList->size; i++){
+                if(pList->messages[i].lifetime > 0)
+                    pList->messages[newSize] = pList->messages[i]; 
+            }
+            *pList->size = newSize;
+        }
+        
+        pthread_mutex_unlock(pList->mutex);
+        sleep(1);
+    }
+
+    pthread_exit(NULL);
+}
+
+void *pipeThread(void *data){
+    ThreadData *td = (ThreadData*)data;
+    
+    pthread_mutex_lock(td->persistent.mutex);
+    pthread_mutex_unlock(td->persistent.mutex);
+    pthread_mutex_lock(td->users.mutex);
+    pthread_mutex_unlock(td->users.mutex);
+    
+    while(running){
+        Headers req;
+        int size = read(fd_manager_fifo, &req, sizeof(Headers));
+
+        if(size < 0){
+            printf("Failed to read request from feed\n");
+        }
+
+        switch(req.type){
+            case LOGIN: {
+                char buffer[req.size];
+                size = read(fd_manager_fifo, buffer, req.size);
+
+                if(size < 0){
+                    printf("Failed to read request from feed\n");
+                    kill(req.pid, SIGUSR1);
+                    break;
+                }
+
+                handleLogin(&td->users, buffer, req.pid);
+                break;
+            }
+            case LOGOUT: {
+                removeUser(&td->users, req.pid);
+            }
+            case COMMAND: {
+                //handle command
+                break;
+            }
+            default: {
+                break;
+            }
+        }
+    }
+
+    pthread_exit(NULL); 
+}
 
 int main(){
     setbuf(stdout, NULL);
-
     struct sigaction sa;
     sa.sa_sigaction = handle_signal;
-    sa.sa_flags = SA_RESTART | SA_SIGINFO;
+    sa.sa_flags = SA_SIGINFO;
     sigaction(SIGINT, &sa, NULL);
+    
+    User users[MAX_USERS];
+    PersistentMessage persistent[MAX_PERSISTENT];
+    int nUsers = 0, nPersis = 0;
+    
+    if(loadFile(persistent, &nPersis) != 0){
+        printf("Failed to open file\n");
+        exit(1);
+    }
 
     if(mkfifo(MANAGER_FIFO, 0666) == -1){
         if(errno == EEXIST)
@@ -69,54 +212,41 @@ int main(){
         Abort(1);
     }
 
-    /*TODO: Thread*/
-    Request req;
-    char buffer[500]; //malloc???
-    while(1){
-        int size = read(fd_manager_fifo, &req, sizeof(Request));
-        
-        if(size < 0){
-            printf("Failed to read request from client\n");
-            Abort(1);
-        }
-
-        size = read(fd_manager_fifo, buffer, req.size);
-
-        if(size < 0){
-            printf("Failed to read request from client\n");
-            Abort(1);
-        }
-
-
-        switch(req.type){
-            case LOGIN: {
-                char message[50], fifo_name[50]; //modify sizes
-
-                sprintf(fifo_name, FEED_FIFO, req.pid);
-                int feed_fifo = open(fifo_name, O_WRONLY);
-                
-                if(feed_fifo == -1){
-                    printf("Failed to open feed fifo\n");
-                    kill(req.pid, SIGKILL);
-                    break;
-                }
-
-                handleLogin(feed_fifo, buffer, message);
-                
-                int written = write(feed_fifo, message, strlen(message) + 1);
-
-                if(written <= 0){
-                    kill(req.pid, SIGKILL);
-                    printf("Failed to send message to user\n");
-                }
-
-                break;
-            }
-            case COMMAND: {
-                //handle command
-                break;
-            }
-        }
-
+    pthread_t threads[2];
+    pthread_mutex_t pMutex, uMutex;
+    
+    if(pthread_mutex_init(&pMutex, NULL) != 0 || pthread_mutex_init(&uMutex, NULL) != 0){
+        printf("Failed to initialize mutex");
+        Abort(1);
     }
+
+    PersistentList perThreadData = {.messages = persistent, .size = &nUsers, .mutex = &pMutex};
+    ThreadData pipeThreadData = {.users = {.users = users, .size = &nUsers, .mutex = &uMutex}, 
+        .persistent = {.messages = persistent, .size = &nUsers, .mutex = &pMutex}};
+
+    pthread_mutex_lock(&pMutex);
+    pthread_mutex_lock(&uMutex);
+
+    if(pthread_create(&threads[0], NULL, &pipeThread, &pipeThreadData) != 0 || pthread_create(&threads[1], NULL, &persistentThread, &perThreadData) != 0){
+        printf("Failed to create thread\n");
+        running = 0;
+    }
+
+    pthread_mutex_unlock(&pMutex);
+    pthread_mutex_unlock(&uMutex);
+
+    while(running){
+        //read server commands
+    }
+
+    pthread_join(threads[0], NULL);
+    pthread_join(threads[1], NULL);
+    saveToFile(persistent, nPersis);
+    pthread_mutex_destroy(&uMutex);
+    pthread_mutex_destroy(&pMutex);
+
+    close(fd_manager_fifo);
+    unlink(MANAGER_FIFO);
+
+    return 0;
 }
