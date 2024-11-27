@@ -37,7 +37,6 @@ typedef struct{
 typedef struct{
     User *users;
     int *size;
-    pthread_mutex_t *mutex;
 } Users;
 
 typedef struct{

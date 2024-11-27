@@ -12,16 +12,12 @@ int openUserFifo(pid_t pid){
 }
 
 void removeUser(Users *users, pid_t pid){
-    pthread_mutex_lock(users->mutex);
-
     int newSize = 0;
     for(int i = 0; i < *users->size; i++){
         if(users->users[i].pid != pid)
             users->users[newSize++] = users->users[i];
     }
     *users->size = newSize;
-
-    pthread_mutex_unlock(users->mutex);
 }
 
 ManagerStatus addUser(Users *users, char *name, User *newUser){
@@ -51,12 +47,8 @@ void handleLogin(Users *users, char *name, pid_t pid){
         return;
     }
 
-    pthread_mutex_lock(users->mutex);
-
     User newUser = {.pid = pid, .nTopics = 0};
     ManagerStatus status = addUser(users , name, &newUser);
-    
-    pthread_mutex_unlock(users->mutex);
     
     int written = write(fifo, &status, sizeof(ManagerStatus));
     
@@ -139,8 +131,6 @@ void *pipeThread(void *data){
     
     pthread_mutex_lock(td->persistent.mutex);
     pthread_mutex_unlock(td->persistent.mutex);
-    pthread_mutex_lock(td->users.mutex);
-    pthread_mutex_unlock(td->users.mutex);
     
     while(running){
         Headers req;
@@ -213,19 +203,18 @@ int main(){
     }
 
     pthread_t threads[2];
-    pthread_mutex_t pMutex, uMutex;
+    pthread_mutex_t pMutex;
     
-    if(pthread_mutex_init(&pMutex, NULL) != 0 || pthread_mutex_init(&uMutex, NULL) != 0){
+    if(pthread_mutex_init(&pMutex, NULL) != 0){
         printf("Failed to initialize mutex");
         Abort(1);
     }
 
     PersistentList perThreadData = {.messages = persistent, .size = &nUsers, .mutex = &pMutex};
-    ThreadData pipeThreadData = {.users = {.users = users, .size = &nUsers, .mutex = &uMutex}, 
+    ThreadData pipeThreadData = {.users = {.users = users, .size = &nUsers}, 
         .persistent = {.messages = persistent, .size = &nUsers, .mutex = &pMutex}};
 
     pthread_mutex_lock(&pMutex);
-    pthread_mutex_lock(&uMutex);
 
     if(pthread_create(&threads[0], NULL, &pipeThread, &pipeThreadData) != 0 || pthread_create(&threads[1], NULL, &persistentThread, &perThreadData) != 0){
         printf("Failed to create thread\n");
@@ -233,7 +222,6 @@ int main(){
     }
 
     pthread_mutex_unlock(&pMutex);
-    pthread_mutex_unlock(&uMutex);
 
     while(running){
         //read server commands
@@ -242,7 +230,6 @@ int main(){
     pthread_join(threads[0], NULL);
     pthread_join(threads[1], NULL);
     saveToFile(persistent, nPersis);
-    pthread_mutex_destroy(&uMutex);
     pthread_mutex_destroy(&pMutex);
 
     close(fd_manager_fifo);
