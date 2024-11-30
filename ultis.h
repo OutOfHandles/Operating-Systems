@@ -5,8 +5,8 @@
 #define FEED_FIFO "FEED_FIFO_%d"
 
 #include <pthread.h>
-//feed -> kick, closing, message
-typedef enum { LOGIN, LOGOUT, KICK, COMMAND, CLOSING, MESSAGE } Type;
+
+typedef enum { LOGIN, LOGOUT, COMMAND, MESSAGE } Type;
 typedef enum { MANAGER_FULL, SUCCESS, TRUNCATED, USERNAME_IN_USE } ManagerStatus;
 
 typedef enum { INVALID_COMMAND, MISSING_ARGUMENTS, ERROR, CHANGED_ARGUMENTS, INVALID_ARGUMENTS, VALID } CommandValidation;
