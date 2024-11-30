@@ -90,10 +90,10 @@ void kickUser(Users *users, char *name){
         return;
     }
 
-    Headers h = {.pid = user->pid, .size = 0, .type = KICK};
+    Headers h = {.pid = user->pid, .size = 0, .type = MESSAGE};
     char buffer[40];
     sprintf(buffer, "%s %s", user->name, " has been kicked\n");
-    h.size = strlen(buffer + 1);
+    h.size = strlen(buffer) + 1;
     
     pthread_mutex_unlock(users->mutex);
     removeUser(users, user->pid);
