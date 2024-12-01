@@ -69,10 +69,10 @@ int loadFile(Topics *topics){
 
         if(index != -1){
             Topic *topic = &topics->topicsList[index];
-            if(topic->nPersistent + 1 < MAX_PERSISTENT)
+            if(topic->nPersistent < MAX_PERSISTENT)
                 topic->persistentList[topic->nPersistent++] = pm;
         }
-        else if(topics->nTopics + 1 < MAX_TOPICS){
+        else if(topics->nTopics < MAX_TOPICS){
             Topic *topic = &topics->topicsList[topics->nTopics++];
             *topic = (Topic){.nPersistent = 0, .locked = false};
             strcpy(topic->name, pm.topic);
