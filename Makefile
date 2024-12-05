@@ -6,3 +6,6 @@ manager: Manager/manager.c Manager/user.c Manager/topic.c utils.c
 
 feed: feed.c utils.c
 	$(CC) -o feed feed.c utils.c $(CFLAGS)
+
+clean:
+	rm Pipes/*
