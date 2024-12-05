@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include "ultis.h"
 
-void toBytes(char *dest, int *totalSize, const void *data, int dataSize){
+void toBytes(char *dest, int *totalSize, void *data, int dataSize){
     memcpy(dest + *totalSize, data, dataSize);
     *totalSize += dataSize;
 }
