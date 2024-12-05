@@ -70,7 +70,7 @@ void *pipeThread(void *data){
         Headers req;
         int size = read(fd_manager_fifo, &req, sizeof(Headers));
 
-        if(size == -1) break; //handle == 0???
+        if(size == -1) break;
 
         switch(req.type){
             case LOGIN: {
@@ -88,11 +88,82 @@ void *pipeThread(void *data){
                 handleLogin(td->users, buffer, req.pid);
                 break;
             }
-            case LOGOUT: {
-                removeUser(td->users, req.pid);
+            case ZERO: {
+                Zero data;
+                size = read(fd_manager_fifo, &data, req.size);                
+                
+                if(size < 0){
+                    printf("Failed to read request from feed\n");
+                    kill(req.pid, SIGUSR1);
+                    break;
+                }
+
+                if(strcmp("exit", data.command) == 0){
+                    removeUser(td->users, req.pid);
+                }
+                else if(strcmp("topics", data.command) == 0){
+                    listTopicsUser(td->topics, req.pid);
+                }
+
+                break;
             }
-            case COMMAND: {
-                //handle command
+            case ONE: {
+                One data;
+                size = read(fd_manager_fifo, &data, req.size);                
+                
+                if(size < 0){
+                    printf("Failed to read request from feed\n");
+                    kill(req.pid, SIGUSR1);
+                    break;
+                }
+
+                if(strcmp("subscribe", data.command) == 0){
+                    subscribeTopic(td->topics, td->users, data.arg, req.pid);
+                }
+                else if(strcmp("unsubscribe", data.command) == 0){
+                    unsubscribeTopic(td->users, data.arg, req.pid);
+                }
+                
+                break;
+            }
+            case THREE: {
+                Three data;
+                size = read(fd_manager_fifo, &data, req.size);                
+
+                if(size < 0){
+                    printf("Failed to read request from feed\n");
+                    kill(req.pid, SIGUSR1);
+                    break;
+                }
+
+                pthread_mutex_lock(td->topics->mutex);
+                int index = getTopicIndex(td->topics, data.topic);
+                if(index == -1){
+                    pthread_mutex_unlock(td->topics->mutex);
+
+                    int fifo = openUserFifo(req.pid);
+                    if(sendServerMessage(fifo, "<MANAGER> Topic does not exist", req.pid) <= 0){
+                        printf("<MANAGER> Failed to send message to user\n");
+                        kill(req.pid, SIGUSR1);
+                    }
+                    continue;
+                }
+                if(td->topics->topicsList[index].locked){
+                    pthread_mutex_unlock(td->topics->mutex);
+
+                    int fifo = openUserFifo(req.pid);
+                    if(sendServerMessage(fifo, "<MANAGER> Topic is currently locked", req.pid) <= 0){
+                        printf("<MANAGER> Failed to send message to user\n");
+                        kill(req.pid, SIGUSR1);
+                    }
+                    continue;
+                }
+
+                if(data.lifetime > 0) addPersistent(td->topics, td->users, data, req.pid);
+                broadCastMessage(td->users, data.message, data.topic, req.pid);
+
+                pthread_mutex_unlock(td->topics->mutex);
+
                 break;
             }
             default: {
@@ -108,7 +179,7 @@ void *pipeThread(void *data){
 
 void closeManager(Users *users){
     for(int i = 0; i < users->size; i++){
-        kill(SIGTERM, users->userList[i].pid);
+        kill(users->userList[i].pid, SIGTERM);
     }
 
     close(fd_manager_fifo);
@@ -183,34 +254,34 @@ int main(){
         if(strcmp(commandName, "close") == 0){
             break;
         }
-        if(strcmp(commandName, "users") == 0){
+        else if(strcmp(commandName, "users") == 0){
             showUsers(&users);
         }
-        if(strcmp(commandName, "show") == 0){
+        else if(strcmp(commandName, "show") == 0){
             char topic[MAX_TOPIC_LEN + 1];
             getArg(command, topic);
 
             showPersistent(&topics, topic);
         }
-        if(strcmp(commandName, "lock") == 0){
+        else if(strcmp(commandName, "lock") == 0){
             char topic[MAX_TOPIC_LEN + 1];
             getArg(command, topic);
 
             changeTopicState(&topics, topic, true);
         }
-        if(strcmp(commandName, "unlock") == 0){
+        else if(strcmp(commandName, "unlock") == 0){
             char topic[MAX_TOPIC_LEN + 1];
             getArg(command, topic);
 
             changeTopicState(&topics, topic, false);
         }
-        if(strcmp(commandName, "remove") == 0){
+        else if(strcmp(commandName, "remove") == 0){
             char name[MAX_NAME_LEN];
             getArg(command, name);
             
             kickUser(&users, name);
         }
-        if(strcmp(commandName, "topics") == 0){
+        else if(strcmp(commandName, "topics") == 0){
             showTopics(&topics);
         }
     }
