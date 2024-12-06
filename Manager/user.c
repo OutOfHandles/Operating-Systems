@@ -92,7 +92,6 @@ int sendServerMessage(int fifo, char *message, pid_t pid){
     
     int written = write(fifo, bytes, size);
 
-    close(fifo);
     return written;
 }
 
@@ -127,8 +126,11 @@ void kickUser(Users *users, char *name){
         }
         
         if(sendServerMessage(fifo, buffer, users->userList[i].pid) <= 0){
+            printf("Failed to send kick message to user\n");
             kill(users->userList[i].pid, SIGUSR1);
         }
+
+        close(fifo);
     }
     pthread_mutex_unlock(users->mutex);
 }
@@ -136,20 +138,21 @@ void kickUser(Users *users, char *name){
 void listTopicsUser(Topics *topics, pid_t pid){
     pthread_mutex_lock(topics->mutex);
     int fifo = openUserFifo(pid);
-    
+
     if(fifo == -1){
         pthread_mutex_unlock(topics->mutex);
+        printf("Failed to open fifo\n");
         return;
     }
-    
+
     if(topics->nTopics == 0){
         if(sendServerMessage(fifo, "<MANAGER> No topics available at the moment", pid) <= 0){
             printf("<MANAGER> Failed to send message to user\n");
         }
     }
-
     for(int i = 0; i < topics->nTopics; i++){
         ServerMessage msg;
+
         sprintf(msg.message, "<MANAGER> %s [%s]\tPersistent messages: %d", topics->topicsList[i].name, 
                 topics->topicsList[i].locked ? "LOCKED" : "UNLOCKED", topics->topicsList[i].nPersistent);
 
@@ -157,6 +160,7 @@ void listTopicsUser(Topics *topics, pid_t pid){
             printf("<MANAGER> Failed to send message to user\n");
         }
     }
+    close(fifo);
     pthread_mutex_unlock(topics->mutex);
 }
 
@@ -164,10 +168,25 @@ void listTopicsUser(Topics *topics, pid_t pid){
 void unsubscribeTopic(Users *users, char *topicName, pid_t pid){
     pthread_mutex_lock(users->mutex);
     int newSize = 0;
-    for(int i = 0; i < users->size; i++){
-        if(strcmp(users->userList[i].topics[i].name, topicName) != 0)
-            users->userList[i].topics[newSize++] = users->userList[i].topics[i];
+    int index = getUserIndex(users, pid);
+
+    if(index == -1){
+        pthread_mutex_unlock(users->mutex);
+        kill(pid, SIGUSR1);
+        printf("Failed to find user\n");
     }
+    printf("Unsub: %s\n", topicName);
+    for(int i = 0; i < users->userList[index].nTopics; i++){
+        if(strcmp(users->userList[index].topics[i].name, topicName) != 0)
+            users->userList[index].topics[newSize++] = users->userList[i].topics[i];
+    }
+
+    users->userList[index].nTopics--;
+
+    for(int i = 0; i < users->userList[index].nTopics; i++){
+        printf("%s\n", users->userList[index].topics[i].name);
+    }
+    
     int fifo = openUserFifo(pid);
     if(fifo == -1){
         printf("<MANAGER> Failed to open user fifo\n");
@@ -177,6 +196,8 @@ void unsubscribeTopic(Users *users, char *topicName, pid_t pid){
     }
 
     sendServerMessage(fifo, "<MANAGER> Success", pid);
+    close(fifo);
+
     pthread_mutex_unlock(users->mutex);
 }
 
@@ -202,7 +223,8 @@ void broadCastMessage(Users *users, char *message, char *topic, pid_t pid){
     sprintf(sm.message, "<%s> %s: %s", users->userList[index].name, topic, message);
     for(int i = 0; i < users->size; i++){
         if(userInTopic(users->userList[i], topic)){
-            int fifo = openUserFifo(pid);
+            int fifo = openUserFifo(users->userList[i].pid);
+
             if(fifo == -1){
                 printf("<MANAGER> Failed to open user fifo\n");
                 continue;
@@ -210,6 +232,7 @@ void broadCastMessage(Users *users, char *message, char *topic, pid_t pid){
             if(sendServerMessage(fifo, sm.message, pid) <= 0){
                 printf("<MANAGER> Failed to broacast message to a user\n");
             }
+            close(fifo);
         }
     }   
     pthread_mutex_unlock(users->mutex);

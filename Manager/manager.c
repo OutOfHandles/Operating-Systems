@@ -118,7 +118,12 @@ void *pipeThread(void *data){
                 }
 
                 if(strcmp("subscribe", data.command) == 0){
-                    subscribeTopic(td->topics, td->users, data.arg, req.pid);
+                    int fifo = subscribeTopic(td->topics, td->users, data.arg, req.pid);
+                    if(fifo != -1){
+                        if(sendServerMessage(fifo, "<MANAGER> Success", req.pid) <= 0)
+                            printf("<MANAGER> Failed to send message to user\n");
+                        close(fifo);
+                    }
                 }
                 else if(strcmp("unsubscribe", data.command) == 0){
                     unsubscribeTopic(td->users, data.arg, req.pid);
@@ -138,17 +143,39 @@ void *pipeThread(void *data){
 
                 pthread_mutex_lock(td->topics->mutex);
                 int index = getTopicIndex(td->topics, data.topic);
-                if(index == -1){
+                int uIndex = getUserIndex(td->users, req.pid);
+
+                if(uIndex == -1){
+                    pthread_mutex_unlock(td->topics->mutex);
+                    printf("<MANAGER> Failed to find user\n");
+                    kill(req.pid, SIGUSR1);
+
+                    continue;
+                }
+
+                if(!userInTopic(td->users->userList[uIndex], data.topic) && index != -1){
                     pthread_mutex_unlock(td->topics->mutex);
 
                     int fifo = openUserFifo(req.pid);
-                    if(sendServerMessage(fifo, "<MANAGER> Topic does not exist", req.pid) <= 0){
+                    if(sendServerMessage(fifo, "<MANAGER> Not subscribed to the topic", req.pid) <= 0){
                         printf("<MANAGER> Failed to send message to user\n");
                         kill(req.pid, SIGUSR1);
                     }
                     continue;
                 }
-                if(td->topics->topicsList[index].locked){
+
+                if(index == -1){
+                    pthread_mutex_unlock(td->topics->mutex);
+
+                    int fifo = subscribeTopic(td->topics, td->users, data.topic, req.pid);
+                    if(fifo != -1){
+                        close(fifo);
+                        pthread_mutex_lock(td->topics->mutex);
+                    }
+                    else
+                        continue;
+                }
+                else if(td->topics->topicsList[index].locked){
                     pthread_mutex_unlock(td->topics->mutex);
 
                     int fifo = openUserFifo(req.pid);

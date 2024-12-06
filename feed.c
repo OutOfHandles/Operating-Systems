@@ -4,18 +4,16 @@
 char feedFifo[50];
 int fd_manager_fifo, fd_feed_fifo;
 
-void handle_signal(int sig){
-
-}
+void handle_signal(int sig){}
 
 void handleSignal(int sig){
     switch(sig){
         case SIGUSR1:{
-            printf("Manager ERRO!\n");
+            printf("An error has occurred in the manager, closing...\n");
             break;
         }
         case SIGUSR2:{
-            printf("You got kicked!\n");
+            printf("You have been kicked!\n");
             break;
         }
         case SIGTERM:{
@@ -23,7 +21,6 @@ void handleSignal(int sig){
             break;
         }
         default:{
-            printf("How?\n");
             break;
         }
     }
@@ -49,11 +46,10 @@ void* readManager(){
 
 void sendLogout(){
     Headers req = {.pid = getpid(), .size = 0, .type = LOGOUT};
-    write(fd_manager_fifo, &req, sizeof(Headers)); //validate??
+    write(fd_manager_fifo, &req, sizeof(Headers));
 }
 
 void Abort(int i){
-    sendLogout();
     close(fd_manager_fifo);
     close(fd_feed_fifo);
     unlink(feedFifo);
@@ -68,6 +64,7 @@ int main(int argc, char *argv[]){
         printf("\nInvalid arguments\n");
         return 1;
     }
+    signal(SIGINT, handleSignal);
     signal(SIGUSR1, handleSignal);
     signal(SIGUSR2, handleSignal);
     signal(SIGTERM, handleSignal);
@@ -156,7 +153,6 @@ int main(int argc, char *argv[]){
         int n_args = 0;
         if(fgets(command, BUFFER_SIZE, stdin) == NULL) break;
         if(command[strlen(command) - 1] == '\n') command[strlen(command) - 1] = '\0';
-        //TODO: Validar comando e separa-los nos structs
 
         CommandValidation v = validateCommand(command, &n_args, FEED_COMMAND);
 
@@ -179,9 +175,7 @@ int main(int argc, char *argv[]){
                 toBytes(bytes, &totalSize, &data, sizeof(Zero));
 
                 write(fd_manager_fifo, bytes, totalSize);
-                memset(bytes, '\0', sizeof(char)*MAX_BYTES);
                 totalSize = 0;
-                // Nao sei se tenho de fazer o printf
                 break;
             }
             case 1:{
@@ -194,7 +188,6 @@ int main(int argc, char *argv[]){
                 toBytes(bytes, &totalSize, &data, sizeof(One));
 
                 write(fd_manager_fifo, bytes, totalSize);
-                memset(bytes, '\0', sizeof(char)*MAX_BYTES);
                 totalSize = 0;
                 break;
             }
@@ -209,7 +202,6 @@ int main(int argc, char *argv[]){
                 toBytes(bytes, &totalSize, &data, sizeof(Three));
                 
                 write(fd_manager_fifo, bytes, totalSize);
-                memset(bytes, '\0', sizeof(char)*MAX_BYTES);
                 totalSize = 0;
                 break;
             }
@@ -221,6 +213,7 @@ int main(int argc, char *argv[]){
     pthread_kill(thread, SIGUSR1);
     pthread_join(thread, NULL);
     pthread_mutex_destroy(&mutex);
-    //logout
+    sendLogout();
+    printf("Logged out\n");
     Abort(0);
 }
