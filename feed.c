@@ -4,23 +4,44 @@
 char feedFifo[50];
 int fd_manager_fifo, fd_feed_fifo;
 
+int sendToManager(Type t, void *data, int size){
+    char bytes[MAX_BYTES];
+    int total = 0;
+    Headers req = {.pid = getpid(), .size = size, .type = t};
+    
+    toBytes(bytes, &total, &req, sizeof(Headers));
+    toBytes(bytes, &total, data, size);
+
+    return write(fd_manager_fifo, bytes, total);
+}
+
+void sendLogout(){
+    Zero data;
+    strcpy(data.command, "exit");
+
+    sendToManager(ZERO, &data, sizeof(Zero));
+}
+
 void handle_signal(int sig){}
 
-void handleSignal(int sig){
+void handleSignal(int sig, siginfo_t *info, void *secret){
     switch(sig){
-        case SIGUSR1:{
-            printf("An error has occurred in the manager, closing...\n");
-            break;
-        }
         case SIGUSR2:{
-            printf("You have been kicked!\n");
+            if(info->si_value.sival_int == MANAGER_ERROR)
+                printf("An error has occurred!\n");
+            else
+                printf("You have been kicked!\n");
             break;
         }
         case SIGTERM:{
             printf("Manager closed!\n");
             break;
         }
-        default:{
+        case SIGINT:{
+            sendLogout();
+            break;
+        }
+        default: {
             break;
         }
     }
@@ -44,18 +65,12 @@ void* readManager(){
     pthread_exit(NULL);
 }
 
-void sendLogout(){
-    Headers req = {.pid = getpid(), .size = 0, .type = LOGOUT};
-    write(fd_manager_fifo, &req, sizeof(Headers));
-}
-
 void Abort(int i){
     close(fd_manager_fifo);
     close(fd_feed_fifo);
     unlink(feedFifo);
     exit(i);
 }
-
 
 int main(int argc, char *argv[]){
     setbuf(stdout, NULL);
@@ -64,10 +79,13 @@ int main(int argc, char *argv[]){
         printf("\nInvalid arguments\n");
         return 1;
     }
-    signal(SIGINT, handleSignal);
-    signal(SIGUSR1, handleSignal);
-    signal(SIGUSR2, handleSignal);
-    signal(SIGTERM, handleSignal);
+
+    struct sigaction sa;
+    sa.sa_sigaction = handleSignal;
+    sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGUSR2, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
     fd_manager_fifo = open(MANAGER_FIFO, O_WRONLY);
 
@@ -94,22 +112,12 @@ int main(int argc, char *argv[]){
         Abort(1);
     }
 
-    char bytes[MAX_BYTES];
-    int totalSize = 0;
-    
-    Headers req = {.pid = getpid(), .type = LOGIN, .size = strlen(argv[1]) + 1};
-    toBytes(bytes, &totalSize, &req, sizeof(req));
-    toBytes(bytes, &totalSize, argv[1], strlen(argv[1]) + 1);
+    if(sendToManager(LOGIN, argv[1], strlen(argv[1]) + 1) <= 0){
+        printf("Failed to send to manager\n");
+    }
 
-    int size = write(fd_manager_fifo, bytes, totalSize); //error handling later
-
-    if(size <= 0) printf("Failed to send to manager\n");
-
-    //TODO: wait for request to be validated with read() when login is fully implemented on the server side
     ManagerStatus response;
-    size = read(fd_feed_fifo, &response, sizeof(ManagerStatus)); //error handling later
-    memset(bytes, '\0', sizeof(char)*MAX_BYTES);
-    totalSize = 0;
+    read(fd_feed_fifo, &response, sizeof(ManagerStatus));
 
     switch(response){
         case SUCCESS: {
@@ -149,7 +157,6 @@ int main(int argc, char *argv[]){
 
     char command[500];
     while(1){
-        req.type = COMMAND;
         int n_args = 0;
         if(fgets(command, BUFFER_SIZE, stdin) == NULL) break;
         if(command[strlen(command) - 1] == '\n') command[strlen(command) - 1] = '\0';
@@ -165,55 +172,34 @@ int main(int argc, char *argv[]){
             continue;
         }
 
-        switch(n_args){
-            case 0:{
-                Zero data; // Mudar o nome do struct
-                getCommandName(command, data.command);
-                req.type = ZERO;
-                req.size = sizeof(data);
-                toBytes(bytes, &totalSize, &req, sizeof(Headers));
-                toBytes(bytes, &totalSize, &data, sizeof(Zero));
+        if(n_args == 0){
+            Zero data;
+            getCommandName(command, data.command);
+            if(strcmp(data.command, "exit") == 0){
+                sendLogout();
+                break;
+            }
 
-                write(fd_manager_fifo, bytes, totalSize);
-                totalSize = 0;
-                break;
-            }
-            case 1:{
-                One data;
-                getCommandName(command, data.command);
-                getArg(command, data.arg);
-                req.type = ONE;
-                req.size = sizeof(data);
-                toBytes(bytes, &totalSize, &req, sizeof(Headers));
-                toBytes(bytes, &totalSize, &data, sizeof(One));
-
-                write(fd_manager_fifo, bytes, totalSize);
-                totalSize = 0;
-                break;
-            }
-            case 3:{
-                Three data;
-                getArg(command, data.topic);
-                getLifeTime(command, &data.lifetime);
-                getMessage(command, data.message);
-                req.type = THREE;
-                req.size = sizeof(Three);
-                toBytes(bytes, &totalSize, &req, sizeof(Headers));
-                toBytes(bytes, &totalSize, &data, sizeof(Three));
-                
-                write(fd_manager_fifo, bytes, totalSize);
-                totalSize = 0;
-                break;
-            }
-            default:{
-                break;
-            }
+            sendToManager(ZERO, &data, sizeof(Zero));
+        }
+        else if(n_args == 1){
+            One data;
+            getCommandName(command, data.command);
+            getArg(command, data.arg);
+            
+            sendToManager(ONE, &data, sizeof(One));
+        }
+        else if(n_args == 3){
+            Three data;
+            getArg(command, data.topic);
+            getLifeTime(command, &data.lifetime);
+            getMessage(command, data.message);
+            sendToManager(THREE, &data, sizeof(Three));
         }
     }
+
     pthread_kill(thread, SIGUSR1);
     pthread_join(thread, NULL);
     pthread_mutex_destroy(&mutex);
-    sendLogout();
-    printf("Logged out\n");
     Abort(0);
 }

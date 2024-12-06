@@ -8,7 +8,7 @@
 
 typedef enum { LOGIN, LOGOUT, COMMAND, MESSAGE, ZERO, ONE, THREE } Type;
 typedef enum { MANAGER_FULL, SUCCESS, TRUNCATED, USERNAME_IN_USE } ManagerStatus;
-
+typedef enum { KICK, MANAGER_ERROR } ClosingType;
 typedef enum { INVALID_COMMAND, MISSING_ARGUMENTS, ERROR, CHANGED_ARGUMENTS, INVALID_ARGUMENTS, VALID } CommandValidation;
 typedef enum { MANAGER_COMMAND  = 7, FEED_COMMAND = 5 } CommandType;
 
@@ -27,7 +27,7 @@ typedef struct{
 } Headers;
 
 typedef struct{
-    char message[MAX_NAME_LEN + MAX_TOPIC_LEN + MAX_MSG_LEN + 10];
+    char message[MAX_NAME_LEN + MAX_TOPIC_LEN + MAX_MSG_LEN + 15];
 } ServerMessage;
 
 typedef struct{

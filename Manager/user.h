@@ -10,6 +10,7 @@
 
 int openUserFifo(pid_t pid);
 void removeUser(Users users[], pid_t pid);
+void sendSignal(pid_t pid, ClosingType t);
 int getUserIndex(Users *users, pid_t pid);
 ManagerStatus addUser(Users *users, char *name, User *newUser);
 void handleLogin(Users *users, char *name, pid_t pid);

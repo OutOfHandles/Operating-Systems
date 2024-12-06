@@ -45,7 +45,7 @@ void showTopics(Topics *topics){
         printf("<MANAGER>: No topics at the moment\n");
     }
     for(int i = 0; i < topics->nTopics; i++){
-        printf("<MANAGER>: %s [%s]\n", topics->topicsList[i].name, topics->topicsList[i].locked ? "LOCKED" : "UNLOCKED");
+        printf("<MANAGER>: %s\t[%s]\n", topics->topicsList[i].name, topics->topicsList[i].locked ? "LOCKED" : "UNLOCKED");
     }
     pthread_mutex_unlock(topics->mutex);
 }
@@ -104,32 +104,22 @@ void saveToFile(Topics *topics){
 }
 
 int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid){
-    pthread_mutex_lock(topics->mutex);
-    pthread_mutex_lock(users->mutex);
     int index = getTopicIndex(topics, topicName);
     int uIndex = getUserIndex(users, pid);
     
     if(uIndex == -1){
-        pthread_mutex_unlock(users->mutex);
-        pthread_mutex_unlock(topics->mutex);
         printf("<MANAGER> Failed to find user\n");
-        kill(pid, SIGUSR1);
-
+        sendSignal(pid, MANAGER_ERROR);
+        removeUser(users, pid);
         return -1;
     }
 
     int fifo = openUserFifo(pid);
 
-    if(fifo == -1){
-        pthread_mutex_unlock(topics->mutex);
-        pthread_mutex_unlock(users->mutex);
+    if(fifo == -1)
         return -1;
-    }
 
     if(userInTopic(users->userList[uIndex], topicName)){
-        pthread_mutex_unlock(users->mutex);
-        pthread_mutex_unlock(topics->mutex);
-
         if(sendServerMessage(fifo, "<MANAGER> Already subscribed to topic", pid) <= 0)
             printf("<MANAGER> Failed to send message to user\n");
         
@@ -144,9 +134,6 @@ int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid){
             topics->topicsList[topics->nTopics++] = t;
         }
         else{
-            pthread_mutex_unlock(users->mutex);
-            pthread_mutex_unlock(topics->mutex);
-
             if(sendServerMessage(fifo, "<MANAGER> Maximum amount of topics reached", pid) <= 0)
                 printf("<MANAGER> Failed to send message to user\n");
 
@@ -166,36 +153,29 @@ int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid){
         }
     }
 
-    pthread_mutex_unlock(users->mutex);
-    pthread_mutex_unlock(topics->mutex);
     return fifo;
 }
 
 void addPersistent(Topics *topics, Users *users, Three data, pid_t pid){
-    pthread_mutex_lock(users->mutex);
-
     int index = getTopicIndex(topics, data.topic);
     int uIndex = getUserIndex(users, pid);
 
     if(uIndex == -1){
-        kill(pid, SIGUSR1);
+        sendSignal(pid, MANAGER_ERROR);
         printf("<MANAGER> Failed to find a user\n");
         return;
     }
     int fifo = openUserFifo(pid);
 
     if(fifo == -1){
-        pthread_mutex_unlock(users->mutex);   
-        pthread_mutex_unlock(topics->mutex); 
-        kill(pid, SIGUSR1);
+        sendSignal(pid, MANAGER_ERROR);
         close(fifo);
+        removeUser(users, pid);
         printf("Failed to open user fifo\n");
 
         return;
     }
-    if(topics->topicsList[index].nPersistent >= MAX_PERSISTENT){
-        pthread_mutex_unlock(users->mutex);   
-        pthread_mutex_unlock(topics->mutex);    
+    if(topics->topicsList[index].nPersistent >= MAX_PERSISTENT){  
         sendServerMessage(fifo, "<MANAGER> Max amount of persistent messages on current topic", pid);
         close(fifo);
         return;    
@@ -207,6 +187,4 @@ void addPersistent(Topics *topics, Users *users, Three data, pid_t pid){
 
     topics->topicsList[index].persistentList[topics->topicsList[index].nPersistent++] = pm;
     close(fifo);
-
-    pthread_mutex_unlock(users->mutex);   
 }

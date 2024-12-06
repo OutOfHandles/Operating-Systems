@@ -11,13 +11,16 @@ int openUserFifo(pid_t pid){
 void removeUser(Users users[], pid_t pid){
     int newSize = 0;
 
-    pthread_mutex_lock(users->mutex);
     for(int i = 0; i < users->size; i++){
         if(users->userList[i].pid != pid)
             users->userList[newSize++] = users->userList[i];
     }
     users->size = newSize;
-    pthread_mutex_unlock(users->mutex);
+}
+
+void sendSignal(pid_t pid, ClosingType t){
+    union sigval val = {.sival_int = t};
+    sigqueue(pid, SIGUSR2, val);
 }
 
 int getUserIndex(Users *users, pid_t pid){
@@ -36,7 +39,7 @@ ManagerStatus addUser(Users *users, char *name, User *newUser){
     }
     ManagerStatus ret = SUCCESS;
 
-    snprintf(newUser->name, MAX_NAME_LEN, "%s", name); //acts like strcpy_s
+    snprintf(newUser->name, MAX_NAME_LEN + 1, "%s", name); //acts like strcpy_s
 
     if(strlen(name) >= MAX_NAME_LEN)
         ret = TRUNCATED;
@@ -50,7 +53,7 @@ void handleLogin(Users *users, char *name, pid_t pid){
     
     if(fifo == -1){
         printf("Failed to open feed fifo\n");
-        kill(pid, SIGUSR1); //USR1 -> internal server error
+        sendSignal(pid, MANAGER_ERROR); //USR1 -> internal server error
         return;
     }
 
@@ -63,7 +66,7 @@ void handleLogin(Users *users, char *name, pid_t pid){
     int written = write(fifo, &status, sizeof(ManagerStatus));
     
     if(written <= 0){
-        kill(pid, SIGUSR1);
+        sendSignal(pid, MANAGER_ERROR);
         printf("Failed to send response to user\n");
     }
 
@@ -101,7 +104,7 @@ void kickUser(Users *users, char *name){
     for(int i = 0; i < users->size; i++){
         if(strcmp(name, users->userList[i].name) == 0){
             user = &users->userList[i];
-            kill(user->pid, SIGUSR2);
+            sendSignal(user->pid, KICK);
             break;
         }
     }
@@ -121,13 +124,13 @@ void kickUser(Users *users, char *name){
     for(int i = 0; i < users->size; i++){
         int fifo = openUserFifo(users->userList[i].pid);
         if(fifo == -1){
-            kill(users->userList[i].pid, SIGUSR1);
+            sendSignal(users->userList[i].pid, MANAGER_ERROR);
             continue;
         }
         
         if(sendServerMessage(fifo, buffer, users->userList[i].pid) <= 0){
             printf("Failed to send kick message to user\n");
-            kill(users->userList[i].pid, SIGUSR1);
+            sendSignal(users->userList[i].pid, MANAGER_ERROR);
         }
 
         close(fifo);
@@ -153,7 +156,7 @@ void listTopicsUser(Topics *topics, pid_t pid){
     for(int i = 0; i < topics->nTopics; i++){
         ServerMessage msg;
 
-        sprintf(msg.message, "<MANAGER> %s [%s]\tPersistent messages: %d", topics->topicsList[i].name, 
+        sprintf(msg.message, "<MANAGER> %s\t[%s]\tPersistent messages: %d", topics->topicsList[i].name, 
                 topics->topicsList[i].locked ? "LOCKED" : "UNLOCKED", topics->topicsList[i].nPersistent);
 
         if(sendServerMessage(fifo, msg.message, pid) <= 0){
@@ -172,7 +175,7 @@ void unsubscribeTopic(Users *users, char *topicName, pid_t pid){
 
     if(index == -1){
         pthread_mutex_unlock(users->mutex);
-        kill(pid, SIGUSR1);
+        sendSignal(pid, MANAGER_ERROR);
         printf("Failed to find user\n");
     }
     printf("Unsub: %s\n", topicName);
@@ -210,17 +213,15 @@ bool userInTopic(User user, char *topic){
 }
 
 void broadCastMessage(Users *users, char *message, char *topic, pid_t pid){
-    pthread_mutex_lock(users->mutex);
     int index = getUserIndex(users, pid);
     
     if(index == -1){
-        pthread_mutex_unlock(users->mutex);
-        kill(pid, SIGUSR1);
+        sendSignal(pid, MANAGER_ERROR);
         return;
     }
 
     ServerMessage sm;
-    sprintf(sm.message, "<%s> %s: %s", users->userList[index].name, topic, message);
+    sprintf(sm.message, "[%s] <%s>: %s", users->userList[index].name, topic, message);
     for(int i = 0; i < users->size; i++){
         if(userInTopic(users->userList[i], topic)){
             int fifo = openUserFifo(users->userList[i].pid);
@@ -234,6 +235,5 @@ void broadCastMessage(Users *users, char *message, char *topic, pid_t pid){
             }
             close(fifo);
         }
-    }   
-    pthread_mutex_unlock(users->mutex);
+    }
 }
