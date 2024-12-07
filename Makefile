@@ -11,4 +11,4 @@ feed: Feed/feed.c utils.c
 
 clean:
 	rm feed manager
-	rm Pipes/*
+	rm Pipes/* -f
