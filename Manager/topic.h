@@ -10,8 +10,8 @@ void showPersistent(Topics *topics, char *topic);
 void changeTopicState(Topics *topics, char *name, bool state);
 void showTopics(Topics *topics);
 int getTopicIndex(Topics *topics, char *topic);
-int loadFile(Topics *topics);
-void saveToFile(Topics *topics);
+int loadFile(Topics *topics, char *file);
+void saveToFile(Topics *topics, char *file);
 int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid);
 void addPersistent(Topics *topics, Users *users, Three data, pid_t pid);
 

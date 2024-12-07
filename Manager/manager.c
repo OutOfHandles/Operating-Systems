@@ -47,8 +47,6 @@ void *persistentThread(void *data){
         sleep(1);
     }
 
-    printf("<MANAGER>: Closing persistent thread\n");
-
     pthread_exit(NULL);
 }
 
@@ -69,150 +67,116 @@ void *pipeThread(void *data){
 
         Headers req;
         int size = read(fd_manager_fifo, &req, sizeof(Headers));
-
         if(size == -1) break;
 
-        switch(req.type){
-            case LOGIN: {
-                char buffer[req.size];
-                size = read(fd_manager_fifo, buffer, req.size);
+        if(req.type == LOGIN){
+            char buffer[req.size];
+            size = read(fd_manager_fifo, buffer, req.size);
+            if(size == -1) break;
 
-                if(size < 0){
-                    printf("Failed to read request from feed\n");
-                    sendSignal(req.pid, MANAGER_ERROR);
-                    break;
-                }
-                
-                if(size == -1) break;
+            handleLogin(td->users, buffer, req.pid);
+        }
+        else if(req.type == ZERO){
+            Zero data;
+            size = read(fd_manager_fifo, &data, req.size);
+            if(size == -1) break;
 
-                handleLogin(td->users, buffer, req.pid);
-                break;
+            if(strcmp("exit", data.command) == 0){
+                pthread_mutex_lock(td->users->mutex);
+                removeUser(td->users, req.pid);
+                pthread_mutex_unlock(td->users->mutex);
             }
-            case ZERO: {
-                Zero data;
-                size = read(fd_manager_fifo, &data, req.size);                
-                
-                if(size < 0){
-                    printf("Failed to read request from feed\n");
-                    sendSignal(req.pid, MANAGER_ERROR);
-                    break;
-                }
+            else if(strcmp("topics", data.command) == 0){
+                listTopicsUser(td->topics, req.pid);
+            }
+        }
+        else if(req.type == ONE){
+            One data;
+            size = read(fd_manager_fifo, &data, req.size);                
+            if(size == -1) break;
 
-                if(strcmp("exit", data.command) == 0){
+            if(strcmp("subscribe", data.command) == 0){
+                pthread_mutex_lock(td->topics->mutex);
+                pthread_mutex_lock(td->users->mutex);
+                int fifo = subscribeTopic(td->topics, td->users, data.arg, req.pid);
+                pthread_mutex_unlock(td->topics->mutex);
+                pthread_mutex_unlock(td->users->mutex);
+
+                if(fifo != -1){
+                    if(sendServerMessage(fifo, "<MANAGER> Success", req.pid) <= 0)
+                        printf("<MANAGER> Failed to send message to user\n");
+                    close(fifo);
+                }
+            }
+            else if(strcmp("unsubscribe", data.command) == 0){
+                unsubscribeTopic(td->users, data.arg, req.pid);
+            }
+        }
+        else if(req.type == THREE){
+            Three data;
+            size = read(fd_manager_fifo, &data, req.size);                
+            if(size == -1) break;
+        
+            pthread_mutex_lock(td->topics->mutex);
+            pthread_mutex_lock(td->users->mutex);
+            int index = getTopicIndex(td->topics, data.topic);
+            int uIndex = getUserIndex(td->users, req.pid);
+
+            if(uIndex == -1){
+                pthread_mutex_unlock(td->topics->mutex);
+                pthread_mutex_unlock(td->users->mutex);
+                printf("<MANAGER> Failed to find user\n");
+                sendSignal(req.pid, MANAGER_ERROR);
+
+                continue;
+            }
+
+            if(!userInTopic(td->users->userList[uIndex], data.topic) && index != -1){
+                pthread_mutex_unlock(td->topics->mutex);
+                pthread_mutex_unlock(td->users->mutex);
+
+                int fifo = openUserFifo(req.pid);
+                if(sendServerMessage(fifo, "<MANAGER> Not subscribed to the topic", req.pid) <= 0){
+                    printf("<MANAGER> Failed to send message to user\n");
+                    sendSignal(req.pid, MANAGER_ERROR);
                     pthread_mutex_lock(td->users->mutex);
                     removeUser(td->users, req.pid);
                     pthread_mutex_unlock(td->users->mutex);
                 }
-                else if(strcmp("topics", data.command) == 0){
-                    listTopicsUser(td->topics, req.pid);
-                }
-
-                break;
+                continue;
             }
-            case ONE: {
-                One data;
-                size = read(fd_manager_fifo, &data, req.size);                
-                
-                if(size < 0){
-                    printf("Failed to read request from feed\n");
-                    sendSignal(req.pid, MANAGER_ERROR);
-                    break;
-                }
-
-                if(strcmp("subscribe", data.command) == 0){
-                    pthread_mutex_lock(td->topics->mutex);
-                    pthread_mutex_lock(td->users->mutex);
-                    int fifo = subscribeTopic(td->topics, td->users, data.arg, req.pid);
+            if(index == -1){
+                int fifo = subscribeTopic(td->topics, td->users, data.topic, req.pid);
+                if(fifo != -1)
+                    close(fifo);
+                else{
                     pthread_mutex_unlock(td->topics->mutex);
                     pthread_mutex_unlock(td->users->mutex);
-
-                    if(fifo != -1){
-                        if(sendServerMessage(fifo, "<MANAGER> Success", req.pid) <= 0)
-                            printf("<MANAGER> Failed to send message to user\n");
-                        close(fifo);
-                    }
+                    continue;
                 }
-                else if(strcmp("unsubscribe", data.command) == 0){
-                    unsubscribeTopic(td->users, data.arg, req.pid);
-                }
-                
-                break;
             }
-            case THREE: {
-                Three data;
-                size = read(fd_manager_fifo, &data, req.size);                
-
-                if(size < 0){
-                    printf("Failed to read request from feed\n");
-                    break;
-                }
-            
-                pthread_mutex_lock(td->topics->mutex);
-                pthread_mutex_lock(td->users->mutex);
-                int index = getTopicIndex(td->topics, data.topic);
-                int uIndex = getUserIndex(td->users, req.pid);
-
-                if(uIndex == -1){
-                    pthread_mutex_unlock(td->topics->mutex);
-                    pthread_mutex_unlock(td->users->mutex);
-                    printf("<MANAGER> Failed to find user\n");
-                    sendSignal(req.pid, MANAGER_ERROR);
-
-                    continue;
-                }
-
-                if(!userInTopic(td->users->userList[uIndex], data.topic) && index != -1){
-                    pthread_mutex_unlock(td->topics->mutex);
-                    pthread_mutex_unlock(td->users->mutex);
-
-                    int fifo = openUserFifo(req.pid);
-                    if(sendServerMessage(fifo, "<MANAGER> Not subscribed to the topic", req.pid) <= 0){
-                        printf("<MANAGER> Failed to send message to user\n");
-                        sendSignal(req.pid, MANAGER_ERROR);
-                        pthread_mutex_lock(td->users->mutex);
-                        removeUser(td->users, req.pid);
-                        pthread_mutex_unlock(td->users->mutex);
-                    }
-                    continue;
-                }
-                if(index == -1){
-                    int fifo = subscribeTopic(td->topics, td->users, data.topic, req.pid);
-                    if(fifo != -1)
-                        close(fifo);
-                    else
-                        continue;
-                }
-                else if(td->topics->topicsList[index].locked){
-                    pthread_mutex_unlock(td->topics->mutex);
-                    pthread_mutex_unlock(td->users->mutex);
-
-                    int fifo = openUserFifo(req.pid);
-                    if(sendServerMessage(fifo, "<MANAGER> Topic is currently locked", req.pid) <= 0){
-                        printf("<MANAGER> Failed to send message to user\n");
-                        sendSignal(req.pid, MANAGER_ERROR);
-                        pthread_mutex_lock(td->users->mutex);
-                        removeUser(td->users, req.pid);
-                        pthread_mutex_unlock(td->users->mutex);
-                    }
-                    continue;
-                }
-
-                if(data.lifetime > 0) addPersistent(td->topics, td->users, data, req.pid);
+            else if(td->topics->topicsList[index].locked){
                 pthread_mutex_unlock(td->topics->mutex);
-
-                broadCastMessage(td->users, data.message, data.topic, req.pid);
                 pthread_mutex_unlock(td->users->mutex);
 
-                break;
+                int fifo = openUserFifo(req.pid);
+                if(sendServerMessage(fifo, "<MANAGER> Topic is currently locked", req.pid) <= 0){
+                    printf("<MANAGER> Failed to send message to user\n");
+                    sendSignal(req.pid, MANAGER_ERROR);
+                    pthread_mutex_lock(td->users->mutex);
+                    removeUser(td->users, req.pid);
+                    pthread_mutex_unlock(td->users->mutex);
+                }
+                continue;
             }
-            default: {
-                break;
-            }
+
+            if(data.lifetime > 0) addPersistent(td->topics, td->users, data, req.pid);
+            pthread_mutex_unlock(td->topics->mutex);
+
+            broadCastMessage(td->users, data.message, data.topic, req.pid);
+            pthread_mutex_unlock(td->users->mutex);
         }
     }
-
-    printf("<MANAGER>: Closing pipe thread\n");
-
     pthread_exit(NULL); 
 }
 
@@ -228,6 +192,12 @@ void closeManager(Users *users){
 int main(){
     setbuf(stdout, NULL);
     signal(SIGINT, handleSignal);
+    char *file = getenv("MSG_FICH");
+    if(!file){
+        printf("No environment variable [MSG_FICH] set with file name\n");
+        exit(1);
+    }
+    
     bool running = true;
     
     if(mkfifo(MANAGER_FIFO, 0666) == -1){
@@ -257,7 +227,7 @@ int main(){
     Topics topics = {.nTopics = 0, .mutex = &tMutex, .running = &running};
     Users users = {.size = 0, .mutex = &uMutex};
     
-    if(loadFile(&topics) != 0){
+    if(loadFile(&topics, file) != 0){
         printf("Failed to open file\n");
         pthread_mutex_destroy(&uMutex);
         pthread_mutex_destroy(&tMutex);
@@ -332,15 +302,12 @@ int main(){
     for(int i = 0; i < 2; i++){
         pthread_kill(threads[i], SIGUSR1);
     }
- 
-
     for(int i = 0; i < 2; i++){
         pthread_join(threads[i], NULL);
     }
-    saveToFile(&topics);
+    saveToFile(&topics, file);
     pthread_mutex_destroy(&uMutex);
     pthread_mutex_destroy(&tMutex);
-
     closeManager(&users);
 
     return 0;

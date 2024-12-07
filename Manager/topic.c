@@ -4,7 +4,7 @@ void showPersistent(Topics *topics, char *topic){
     bool shown = false;
     pthread_mutex_lock(topics->mutex);
     for(int i = 0; i < topics->nTopics; i++){
-        if(strcmp(topic, topics->topicsList[i].name) == 0){ //|| strcmp(topic, "*") == 0
+        if(strcmp(topic, topics->topicsList[i].name) == 0){
             PersistentMessage *persistentList = topics->topicsList[i].persistentList;
 
             for(int j = 0; j < topics->topicsList[i].nPersistent; j++){
@@ -58,8 +58,8 @@ int getTopicIndex(Topics *topics, char *topic){
     return -1;
 }
 
-int loadFile(Topics *topics){
-    FILE *f = fopen("messages.txt", "r"); //change to read from env
+int loadFile(Topics *topics, char *file){
+    FILE *f = fopen(file, "r"); //change to read from env
 
     if(!f) return -1;
     PersistentMessage pm;
@@ -84,9 +84,8 @@ int loadFile(Topics *topics){
     return 0;
 }
 
-
-void saveToFile(Topics *topics){
-    FILE *f = fopen("messages.txt", "w"); //change to read from env
+void saveToFile(Topics *topics, char *file){
+    FILE *f = fopen(file, "w"); //change to read from env
 
     if(!f){
         printf("Failed to open file\n");
@@ -120,8 +119,11 @@ int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid){
         return -1;
 
     if(userInTopic(users->userList[uIndex], topicName)){
-        if(sendServerMessage(fifo, "<MANAGER> Already subscribed to topic", pid) <= 0)
+        if(sendServerMessage(fifo, "<MANAGER> Already subscribed to topic", pid) <= 0){
             printf("<MANAGER> Failed to send message to user\n");
+            sendSignal(pid, MANAGER_ERROR);
+            removeUser(users, pid);
+        }
         
         return -1;
     }
@@ -134,8 +136,11 @@ int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid){
             topics->topicsList[topics->nTopics++] = t;
         }
         else{
-            if(sendServerMessage(fifo, "<MANAGER> Maximum amount of topics reached", pid) <= 0)
+            if(sendServerMessage(fifo, "<MANAGER> Maximum amount of topics reached", pid) <= 0){
+                removeUser(users, pid);
+                sendSignal(pid, MANAGER_ERROR);
                 printf("<MANAGER> Failed to send message to user\n");
+            }
 
             return -1;
         }
@@ -148,6 +153,8 @@ int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid){
                     topics->topicsList[index].name, topics->topicsList[index].persistentList[i].content);
 
             if(sendServerMessage(fifo, msg.message, pid) <= 0){
+                removeUser(users, pid);
+                sendSignal(pid, MANAGER_ERROR);
                 printf("<MANAGER> Failed to send message to user\n");
             }
         }
@@ -161,6 +168,7 @@ void addPersistent(Topics *topics, Users *users, Three data, pid_t pid){
     int uIndex = getUserIndex(users, pid);
 
     if(uIndex == -1){
+        removeUser(users, pid);
         sendSignal(pid, MANAGER_ERROR);
         printf("<MANAGER> Failed to find a user\n");
         return;
@@ -176,7 +184,11 @@ void addPersistent(Topics *topics, Users *users, Three data, pid_t pid){
         return;
     }
     if(topics->topicsList[index].nPersistent >= MAX_PERSISTENT){  
-        sendServerMessage(fifo, "<MANAGER> Max amount of persistent messages on current topic", pid);
+        if(sendServerMessage(fifo, "<MANAGER> Max amount of persistent messages on current topic", pid) <= 0){
+            removeUser(users, pid);
+            sendSignal(pid, MANAGER_ERROR);
+            printf("<MANAGER> Failed to send message to user\n");
+        }
         close(fifo);
         return;    
     }

@@ -65,11 +65,6 @@ void getArg(char *command, char *arg){
     strcpy(arg, token);
 
     snprintf(arg, MAX_TOPIC_LEN + 1, "%s", token);
-    // for(i = 0; i < strlen(token) && i < MAX_TOPIC_LEN && i < BUFFER_SIZE - 1; i++){
-    //     arg[i] = token[i];
-    // }
-
-    // arg[i] = '\0';
 }
 
 void getLifeTime(char *command, int *lifetime){
