@@ -8,7 +8,7 @@ void showPersistent(Topics *topics, char *topic){
             PersistentMessage *persistentList = topics->topicsList[i].persistentList;
 
             for(int j = 0; j < topics->topicsList[i].nPersistent; j++){
-                printf("[%s] : <%s> : %d : %s\n", persistentList[j].name, persistentList[j].topic, persistentList[j].lifetime, persistentList[j].content); //persistentList[j], persistentList->topic, messages[i].lifetime, messages[i].content
+                printf("[%s] : <%s> : %d : %s\n", persistentList[j].name, persistentList[j].topic, persistentList[j].lifetime, persistentList[j].content);
                 shown = true;
             }
         }
