@@ -53,16 +53,15 @@ void getCommandName(char *command, char *name){
     char temp[BUFFER_SIZE];
     strcpy(temp, command);
     char *token = strtok(temp, " ");
-    strcpy(name, token);
+    
+    snprintf(name, MAX_COMMAND_LEN + 1, "%s", token);
 }
 
 void getArg(char *command, char *arg){
-    // int i;
     char temp[BUFFER_SIZE];
     strcpy(temp, command);
     strtok(temp, " ");
     char *token = strtok(NULL, " ");
-    strcpy(arg, token);
 
     snprintf(arg, MAX_TOPIC_LEN + 1, "%s", token);
 }
@@ -78,7 +77,6 @@ void getLifeTime(char *command, int *lifetime){
 }
 
 void getMessage(char *command, char *message){
-    // int i;
     char temp[BUFFER_SIZE];
     strcpy(temp, command);
     strtok(temp, " ");
@@ -87,10 +85,6 @@ void getMessage(char *command, char *message){
     token = strtok(NULL, "");
 
     snprintf(message, MAX_MSG_LEN + 1, "%s", token);
-    // for(i = 0; i < strlen(token) && i < MAX_MSG_LEN; i++){
-    //     message[i] = token[i];
-    // }
-    // message[i] = '\0';
 }
 
 CommandValidation validateCommand(char *command, int *nArgs, CommandType t){
