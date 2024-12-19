@@ -190,14 +190,11 @@ void unsubscribeTopic(Users *users, char *topicName, pid_t pid){
 
     for(int i = 0; i < users->userList[index].nTopics; i++){
         if(strcmp(users->userList[index].topics[i].name, topicName) != 0)
-            users->userList[index].topics[newSize++] = users->userList[i].topics[i];
+            users->userList[index].topics[newSize++] = users->userList[index].topics[i];
+        
     }
 
     users->userList[index].nTopics--;
-
-    for(int i = 0; i < users->userList[index].nTopics; i++){
-        printf("%s\n", users->userList[index].topics[i].name);
-    }
     
     int fifo = openUserFifo(pid);
     if(fifo == -1){
