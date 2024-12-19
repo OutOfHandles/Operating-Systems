@@ -130,9 +130,9 @@ int subscribeTopic(Topics *topics, Users *users, char *topicName, pid_t pid){
 
     if(index == -1){
         if(topics->nTopics < MAX_TOPICS){
-            strcpy(users->userList[uIndex].topics[users->userList[uIndex].nTopics++].name, topicName);
             Topic t = {.locked = false, .nPersistent = 0};
             strcpy(t.name, topicName);
+            users->userList[uIndex].topics[users->userList[uIndex].nTopics++] = t;
             topics->topicsList[topics->nTopics++] = t;
         }
         else{
